@@ -47,7 +47,9 @@ spec:
               command:
                 - pgrep
                 - -f
-                - "gateway run"
+                # 收窄到真正的 python gateway 进程;"gateway run" 会误匹配常驻的
+                # s6 包装脚本(main-wrapper.sh gateway run)→ gateway 挂死也判活。
+                - "hermes gateway run"
             initialDelaySeconds: 30
             periodSeconds: 15
           resources:

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes
+  namespace: hermes
+  labels:
+    app: hermes
+spec:
+  replicas: 1
+  # Recreate:先终止旧 pod 再起新 pod,避免两个 pod 同时轮询 Telegram → 409
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes
+    spec:
+      securityContext:
+        # 让 PVC 可被容器内降权后的 hermes 用户(uid/gid 10000)写
+        fsGroup: 10000
+      # 注意:不要设 runAsNonRoot —— 镜像的 /init(s6-overlay)需以 root 启动做
+      # chown/usermod,再 s6-setuidgid 降权到 10000。
+      containers:
+        - name: hermes
+          image: nousresearch/hermes-agent:latest
+          # 只覆盖 args,保留镜像 ENTRYPOINT=/init(s6 PID1)。不要覆盖 command。
+          args: ["gateway", "run"]
+          env:
+            - name: HERMES_UID
+              value: "10000"
+            - name: HERMES_GID
+              value: "10000"
+          envFrom:
+            - secretRef:
+                name: hermes-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hermes-data

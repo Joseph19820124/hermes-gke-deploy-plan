@@ -1,0 +1,5 @@
+# 真实密钥绝不入库
+secret.yaml
+*-secret.yaml
+*.key
+.env

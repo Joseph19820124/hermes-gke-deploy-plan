@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes-egress-limit
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      app: hermes
+  policyTypes:
+  - Egress
+  egress:
+  # 允许解析 DNS
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # 允许公网出站 (Telegram / Gemini API)，但排除 169.254.169.254 (Metadata Server)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except: ["169.254.169.254/32"]
+    ports:
+    - port: 443
+      protocol: TCP

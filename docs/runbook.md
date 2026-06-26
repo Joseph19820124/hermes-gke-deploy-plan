@@ -60,6 +60,9 @@ EOF
 kubectl -n $NS wait --for=condition=Ready pod/migrator --timeout=120s
 # 拷贝(注意结尾的 . 表示拷目录内容)
 kubectl -n $NS cp ~/hermes-gemini-data/. migrator:/opt/data
+# 修正文件属主与权限，确保 UID 10000 拥有完整读写权限并与 OnRootMismatch 互补
+kubectl -n $NS exec migrator -- chown -R 10000:10000 /opt/data
+kubectl -n $NS exec migrator -- chmod -R ug=rwX,o= /opt/data
 kubectl -n $NS exec migrator -- ls -la /opt/data   # 核对
 kubectl -n $NS delete pod migrator
 ```

@@ -18,9 +18,12 @@ spec:
       labels:
         app: hermes
     spec:
+      automountServiceAccountToken: false  # 禁用 Token 挂载，切断对 K8s API 的访问路径
+      terminationGracePeriodSeconds: 30    # 优雅停机时间，确保 Telegram getUpdates 轮询断开，防 409
       securityContext:
         # 让 PVC 可被容器内降权后的 hermes 用户(uid/gid 10000)写
         fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch  # 避免每次启动递归 chown
       # 注意:不要设 runAsNonRoot —— 镜像的 /init(s6-overlay)需以 root 启动做
       # chown/usermod,再 s6-setuidgid 降权到 10000。
       containers:
@@ -39,6 +42,16 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/data
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                # 收窄到真正的 python gateway 进程;"gateway run" 会误匹配常驻的
+                # s6 包装脚本(main-wrapper.sh gateway run)→ gateway 挂死也判活。
+                - "hermes gateway run"
+            initialDelaySeconds: 30
+            periodSeconds: 15
           resources:
             requests:
               cpu: "500m"

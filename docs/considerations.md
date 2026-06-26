@@ -55,15 +55,35 @@ Hermes 默认 `local` 后端:**工具命令在 pod 内执行**。
 
 ---
 
-## Open questions(给专业评审)
+## Open questions & 评审决议
 
-1. **是否值得上 GKE?** 单个有状态 pod,GKE 偏重;收益主要是托管运维 + 未来 CI/CD。是否考虑更轻的方案(继续 VM 容器 / Compute Engine MIG)?
-2. **HA 与可用性**:受 SQLite + 单轮询限制,**无法横向扩容/多副本**。可接受单点吗?故障时靠 Deployment 重建(分钟级恢复)+ PD 快照,够吗?
-3. **资源规格**:`0.5–1 vCPU / 1–2Gi` 对 Hermes 的实际工作集是否合适?
-4. **密钥管理**:用普通 K8s Secret 够吗,还是上 Secret Manager + CSI / External Secrets?
-5. **agent 执行安全**:`local` 后端让 agent 在 pod 内跑命令——是否需要 NetworkPolicy 限制 egress、只读根文件系统、seccomp、专用最小权限 ServiceAccount?
-6. **镜像供应链**:直接用 Docker Hub `nousresearch/hermes-agent:latest` 是否可接受?是否应固定到 digest 并镜像到 Artifact Registry?
-7. **成本**:~$20–95/月(看 Autopilot 免费集群额度是否已被占用)+ Gemini token,是否 OK?
+1. **是否值得上 GKE?**
+   * **决议**: 依然以 GKE Autopilot 作为主要方向（用于实验学习/后续 CI/CD，且每个计费账号有 1 个免费集群额度）。同时，将 **GCP VM (COS) + 独立 PD + 快照** 作为 **Plan B** 记录（该方案无集群管理费，且容器启停仅需数秒，磁盘无需跨节点 detach/attach，更轻量）。
+   * **规格调整**: 若使用 VM 运行，由于 Hermes 进程（Python + SQLite + LLM 较大上下文）开销，`e2-micro` (1GB) 偏紧，推荐起步使用 **`e2-small` (2GB 内存)**。
+
+2. **HA 与可用性 & 节点升级离线**
+   * **决议**: 接受单副本有状态 Pod 的单点局限性。在 GKE Autopilot 自动维护升级节点时，单副本 Pod 会被驱逐重建，造成分钟级离线。可考虑通过配置 GCP 维护窗口（Maintenance Window）将离线时间窗口规避开核心日间时段。
+
+3. **资源规格 (Pod)**
+   * **决议**: Pod 设置 `requests: 500m CPU / 1Gi`,`limits: 1 CPU / 2Gi` 级别比较合理，后续可根据 Vertical Pod Autoscaler (VPA) 推荐值进行右调（Right-sizing）。
+
+4. **密钥管理**
+   * **决议**: 采用 K8s Secret 配合 `automountServiceAccountToken: false`（彻底切断 Pod 对 K8s API 越权访问）目前已足够。
+
+5. **Agent 执行安全 (Pod 内跑命令)**
+   * **决议**:
+     * 必须在 Pod spec 中设置 `automountServiceAccountToken: false`。
+     * 由于 GKE Autopilot 默认强制启用 Workload Identity，未绑定 GSA 的 Pod 会被 GKE metadata server 自动拦截节点凭证，故 metadata 凭证窃取属于“纵深防御（Defense-in-depth）”范畴，非高危阻塞。
+     * 新增 `k8s/networkpolicy.yaml`，使用基于 `ipBlock` 的 egress 白名单，放行公网 DNS (53) 和 HTTPS (443) 流量，同时精确排除 Metadata Server IP (`169.254.169.254/32`)。
+
+6. **镜像供应链**
+   * **决议**: 在生产部署中避免直接引用 `:latest`。推荐锁定到特定版本 digest，并镜像到 Google Artifact Registry (GAR)，以规避 Docker Hub 限流及不可预期的镜像更新/漂移。
+
+7. **优雅停机与进程挂死自愈 (新增)**
+   * **决议**:
+     * **存活探针**: 由于 Gateway 无 HTTP 接口，添加 Exec 探针运行 `pgrep -f "gateway run"` 以监控并自动重启死锁挂死的 python 进程。
+     * **优雅停机**: Pod 模版中设置 `terminationGracePeriodSeconds: 30`，确保 s6-overlay 能将 `SIGTERM` 信号正确传递至 python 进程，优雅关闭 Telegram `getUpdates` 轮询，避免滚动更新时发生 409 Conflict。
+
 8. **备份/DR**:PVC 快照频率与恢复演练。
 9. **滚动更新**:确认 `Recreate` 能避免 Telegram 双轮询;升级流程是否需要更细的编排(先 `kubectl scale --replicas=0` 再更新)?
 10. **可观测性**:是否需要把日志/指标接 Cloud Logging/Monitoring,以及 token 用量看板(现有看板在另一个项目)。
